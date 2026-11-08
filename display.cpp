@@ -1,37 +1,27 @@
+// display.cpp : shell prompt
+#include "display.h"
+
+#include <cstdlib>
 #include <iostream>
 #include <pwd.h>
-#include <unistd.h>
-#include <limits.h>
 #include <sys/utsname.h>
+#include <unistd.h>
 
+void displayPrompt(const std::string &dir)
+{
+    // Username from the password database (pwd.h), falling back to $USER.
+    const char *user = nullptr;
+    struct passwd *pw = getpwuid(getuid());
+    if (pw)
+        user = pw->pw_name;
+    if (!user)
+        user = getenv("USER");
+    if (!user)
+        user = "user";
 
-// Function to display the shell prompt..........
-void displayPrompt() {
-    // Get username
-    const char* username = getenv("USER");  // Fallback to getpwuid if USER not set.......
-    if (!username) {
-        struct passwd* pw = getpwuid(getuid());
-        username = pw ? pw->pw_name : "unknown";
-    }
+    // System name from uname().
+    struct utsname info;
+    std::string host = (uname(&info) == 0) ? info.nodename : "localhost";
 
-
-    // Get system name
-    struct utsname sysinfo;
-    uname(&sysinfo);
-    std::string systemname = sysinfo.nodename;
-
-    // Get current directory
-    char cwd[PATH_MAX];
-    getcwd(cwd, sizeof(cwd));
-    std::string dir = cwd;
-
-    // Replace home directory with ~
-    const char* home = getenv("HOME");
-    if (home && dir.find(home) == 0) {
-        dir.replace(0, std::string(home).length(), "~");
-    }
-
-
-    std::cout << username << "@" << systemname << ":" << dir << "~ > ";  // Display prompt...
-    std::cout.flush();
+    std::cout << user << "@" << host << ":" << dir << "> " << std::flush;
 }

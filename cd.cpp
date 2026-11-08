@@ -1,51 +1,65 @@
-#include "shell.h"   // Include the shell header for Shell class definition.........
-#include <iostream>  // For std::cout, std::cerr
-#include <unistd.h>  // For chdir, getcwd
+// cd.cpp : cd and pwd built-ins
+#include "shell.h"
 
+#include <cerrno>
+#include <climits>
+#include <cstring>
+#include <iostream>
+#include <unistd.h>
 
-// Change directory command implementation.........
+// cd [dir] : supports ".", "..", "-", "~" and "~/path". No argument = shell home.
 void Shell::handleCD(const std::vector<std::string> &args)
 {
-    std::string target;
-    char cwd[4096];
-    if (!getcwd(cwd, sizeof(cwd)))
+    if (args.size() > 2)
     {
-        perror("getcwd");
+        std::cerr << "Invalid arguments" << std::endl;
         return;
     }
-    std::string current_dir = cwd;
 
+    char cwd[PATH_MAX];
+    if (!getcwd(cwd, sizeof(cwd)))
+    {
+        perror("cd: getcwd");
+        return;
+    }
+
+    std::string target;
+    bool print_dir = false;
     if (args.size() == 1)
     {
-        target = getenv("HOME") ? getenv("HOME") : "/";
+        target = home_dir;
+    }
+    else if (args[1] == "-")
+    {
+        if (prev_dir.empty())
+        {
+            std::cerr << "cd: no previous directory" << std::endl;
+            return;
+        }
+        target = prev_dir;
+        print_dir = true;
     }
     else
     {
-        target = args[1];
-        if (target == "~")
-        {
-            target = getenv("HOME") ? getenv("HOME") : "/";
-        }
-        else if (target == "-")
-        {
-            if (prev_dir.empty())
-            {
-                std::cerr << "cd: OLDPWD not set" << std::endl;
-                return;
-            }
-            target = prev_dir;
-            std::cout << target << std::endl;
-        }
+        target = expandHome(args[1]);
     }
-
-    // Change directory.......
 
     if (chdir(target.c_str()) != 0)
     {
-        perror("cd");
+        std::cerr << "cd: " << (args.size() > 1 ? args[1] : target) << ": " << strerror(errno) << std::endl;
+        return;
     }
+    prev_dir = cwd;
+
+    if (print_dir)
+        handlePWD();
+}
+
+void Shell::handlePWD()
+{
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)))
+        std::cout << cwd << std::endl;
     else
-    {
-        prev_dir = current_dir;
-    }
+        perror("pwd");
 }

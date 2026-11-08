@@ -1,14 +1,17 @@
+// echo.cpp : echo built-in
 #include "shell.h"
-#include <iostream>
-#include <vector>
 
-void handleEcho(const std::vector<std::string>& args) {
-    // Start from index 1 to skip command name "echo"
-    for (size_t i = 1; i < args.size(); ++i) {
+#include <iostream>
+
+// Prints the arguments separated by single spaces; extra spaces/tabs between
+// words are already collapsed by the tokenizer.
+void Shell::handleEcho(const std::vector<std::string> &args)
+{
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if (i > 1)
+            std::cout << ' ';
         std::cout << args[i];
-        if (i < args.size() - 1) {
-            std::cout << " ";  // print space between arguments
-        }
     }
     std::cout << std::endl;
 }

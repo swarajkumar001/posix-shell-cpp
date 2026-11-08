@@ -1,136 +1,97 @@
+// pinfo.cpp : process information read from /proc (no popen)
 #include "shell.h"
-#include <unistd.h>     // For getpid, readlink
-#include <sys/types.h>  // For pid_t
-#include <sys/stat.h>   // For struct stat
-#include <limits.h>
-#include <fcntl.h>      
-#include <string>
+
+#include <climits>
+#include <fcntl.h>
+#include <iostream>
 #include <sstream>
-#include <iostream>  // For std::cout, std::cerr
+#include <string>
+#include <unistd.h>
 
+static bool readFile(const std::string &path, std::string &out)
+{
+    out.clear();
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0)
+        return false;
+    char buf[4096];
+    ssize_t r;
+    while ((r = read(fd, buf, sizeof(buf))) > 0)
+        out.append(buf, r);
+    close(fd);
+    return r == 0 && !out.empty();
+}
 
-//pinfo command implementation....
+// pinfo [pid] : status, virtual memory and executable path of a process
+// (the shell itself when no pid is given).
 void Shell::handlePinfo(const std::vector<std::string> &args)
 {
-    // If no PID is given, use the current process id...
-    pid_t qpid;
-    if (args.size() == 1)
-    {
-        qpid = getpid();
-    }
-    else if (args.size() == 2) // pid provided as argument.........
-    {
-        try
-        {
-            qpid = static_cast<pid_t>(std::stol(args[1]));
-        }
-        catch (...)
-        {
-            std::cerr << "Invalid PID: " << args[1] << std::endl;
-            return;
-        }
-    }
-    else
+    if (args.size() > 2)
     {
         std::cerr << "Usage: pinfo [pid]" << std::endl;
         return;
     }
 
-    const std::string procDir = "/proc/" + std::to_string(qpid);  // Path to /proc/[pid] directory.....
-
-    // helper: read entire file into a string using POSIX open/read
-    auto readFileToString = [](const std::string &path, std::string &out) -> bool
+    pid_t pid = getpid();
+    if (args.size() == 2)
     {
-        out.clear();
-        int fd = open(path.c_str(), O_RDONLY);
-        if (fd < 0)
-            return false;
-        char buf[4096];
-        ssize_t r;
-        while ((r = read(fd, buf, sizeof(buf))) > 0)
-            out.append(buf, buf + r);
-        close(fd);
-        return (r == 0);
-    };
-
-    std::string line;
-    if (!readFileToString(procDir + "/stat", line))
-    {
-        std::cerr << "Error: unable to open " << procDir << "/stat" << std::endl;
-        return;
-    }
-    // stat contains a trailing newline; only keep up to the first newline
-    size_t nl = line.find('\n');
-    if (nl != std::string::npos)
-        line.resize(nl);
-    if (line.empty())
-    {
-        std::cerr << "Error: empty stat for " << qpid << std::endl;
-        return;
+        try
+        {
+            size_t pos = 0;
+            long v = std::stol(args[1], &pos);
+            if (pos != args[1].size() || v <= 0)
+                throw 0;
+            pid = static_cast<pid_t>(v);
+        }
+        catch (...)
+        {
+            std::cerr << "pinfo: invalid pid '" << args[1] << "'" << std::endl;
+            return;
+        }
     }
 
-    // Extract pid, (comm), then rest
-    size_t lpar = line.find('(');
-    size_t rpar = line.rfind(')');
-    if (lpar == std::string::npos || rpar == std::string::npos || rpar < lpar)
-    {
-        std::cerr << "Error: malformed stat for " << qpid << std::endl;
-        return;
-    }
-    pid_t spid = 0;
-    try
-    {
-        spid = static_cast<pid_t>(std::stol(line.substr(0, lpar)));
-    }
-    catch (...)
-    {
-        std::cerr << "Error: malformed pid in stat" << std::endl;
-        return;
-    }
-    // std::string comm = line.substr(lpar + 1, rpar - lpar - 1); // unused
-    std::string rest = line.substr(rpar + 2); // skip ") "
+    const std::string proc = "/proc/" + std::to_string(pid);
 
-    std::istringstream ss(rest);
+    // /proc/<pid>/stat : "pid (comm) state ppid pgrp session tty_nr tpgid ..."
+    std::string stat;
+    if (!readFile(proc + "/stat", stat))
+    {
+        std::cerr << "pinfo: process " << pid << " does not exist" << std::endl;
+        return;
+    }
+    size_t rpar = stat.rfind(')'); // comm may itself contain spaces or ')'
+    if (rpar == std::string::npos || rpar + 2 > stat.size())
+    {
+        std::cerr << "pinfo: unexpected format in " << proc << "/stat" << std::endl;
+        return;
+    }
+    std::istringstream ss(stat.substr(rpar + 2));
     char state = '?';
     long ppid = 0, pgrp = 0, session = 0, tty_nr = 0, tpgid = 0;
-    ss >> state;   // process state
-    ss >> ppid;    // parent process id
-    ss >> pgrp;    // process group id
-    ss >> session; // session id
-    ss >> tty_nr;  // controlling terminal
-    ss >> tpgid;   // terminal process group id.....
+    ss >> state >> ppid >> pgrp >> session >> tty_nr >> tpgid;
 
-    std::string processStatus(1, state);
-    if (pgrp == tpgid && tty_nr != 0)
-        processStatus += "+";
+    std::string status(1, state);
+    if (tty_nr != 0 && pgrp == tpgid) // process group owns the terminal => foreground
+        status += '+';
 
-    // Read memory from /proc/[pid]/statm
-    std::string statmContent;
-    if (!readFileToString(procDir + "/statm", statmContent))
+    // /proc/<pid>/statm : first field is total virtual memory in pages
+    unsigned long vm_kb = 0;
+    std::string statm;
+    if (readFile(proc + "/statm", statm))
     {
-        std::cerr << "Error: unable to open " << procDir << "/statm" << std::endl;
-        return;
+        std::istringstream ms(statm);
+        unsigned long pages = 0;
+        ms >> pages;
+        long page_size = sysconf(_SC_PAGESIZE);
+        vm_kb = pages * static_cast<unsigned long>(page_size > 0 ? page_size : 4096) / 1024;
     }
 
-    // statm contains a trailing newline; only keep up to the first newline........
-    std::istringstream msm(statmContent);
-    unsigned long virtPages = 0;
-    msm >> virtPages;
-    long pageSize = sysconf(_SC_PAGESIZE);
-    unsigned long virtKB = (pageSize > 0) ? (virtPages * (unsigned long)pageSize) / 1024UL : 0UL;
+    char exe[PATH_MAX];
+    ssize_t len = readlink((proc + "/exe").c_str(), exe, sizeof(exe) - 1);
+    std::string exe_path = (len >= 0) ? displayPath(std::string(exe, len)) : "(permission denied)";
 
-    // Executable path
-    char exePath[PATH_MAX];
-    ssize_t len = readlink((procDir + "/exe").c_str(), exePath, sizeof(exePath) - 1);
-    if (len < 0)
-    {
-        std::cerr << "Error: unable to read executable path" << std::endl;
-        return;
-    }
-    exePath[len] = '\0';
-
-    std::cout << "pid -- " << spid << std::endl
-              << "Process Status -- " << processStatus << std::endl
-              << "memory -- " << virtKB << " KB" << std::endl
-              << "Executable Path -- " << exePath << std::endl;
+    std::cout << "pid -- " << pid << '\n'
+              << "Process Status -- " << status << '\n'
+              << "memory -- " << vm_kb << '\n'
+              << "Executable Path -- " << exe_path << std::endl;
 }

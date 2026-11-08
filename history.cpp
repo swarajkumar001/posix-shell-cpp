@@ -1,51 +1,81 @@
+// history.cpp : persistent command history (stored in ~/.my_shell_history)
+#include "shell.h"
+
 #include <fstream>
-#include <vector>
-#include <string>
-#include <cstdlib>
 #include <iostream>
 
-const std::string historyFile = std::string(getenv("HOME")) + "/.my_shell_history";
-std::vector<std::string> history;
+static const size_t HISTORY_MAX = 20;  // commands remembered
+static const size_t HISTORY_SHOW = 10; // shown by plain "history"
 
-
-// Load history from file up to last 20 commands..........
-void loadHistory()
+void Shell::loadHistory()
 {
     history.clear();
-    std::ifstream fin(historyFile);
+    std::ifstream in(history_file);
     std::string line;
-    while (std::getline(fin, line))
-    {
+    while (std::getline(in, line))
         if (!line.empty())
             history.push_back(line);
-    }
-    // Keep only last 20
-    if (history.size() > 20)
-        history.erase(history.begin(), history.end() - 20);
+    if (history.size() > HISTORY_MAX)
+        history.erase(history.begin(), history.end() - HISTORY_MAX);
 }
 
-// saving history to the file.........
-void saveHistory()
+void Shell::saveHistory()
 {
-    std::ofstream fout(historyFile, std::ios::trunc);
-    for (const auto &cmd : history)
-        fout << cmd << std::endl;
-}
-// Add command to history (called after executing a command).........
-void addToHistory(const std::string &cmd)
-{
-    if (cmd.empty())
+    std::ofstream out(history_file, std::ios::trunc);
+    if (!out)
         return;
-    if (history.size() == 20)
+    for (const auto &cmd : history)
+        out << cmd << '\n';
+}
+
+// Stores a command (consecutive duplicates are skipped), dropping the oldest
+// one once 20 are stored, and saves to disk so history survives restarts.
+void Shell::addToHistory(const std::string &cmd)
+{
+    size_t b = cmd.find_first_not_of(" \t");
+    if (b == std::string::npos)
+        return;
+    size_t e = cmd.find_last_not_of(" \t");
+    std::string clean = cmd.substr(b, e - b + 1);
+
+    if (!history.empty() && history.back() == clean)
+        return;
+    history.push_back(clean);
+    if (history.size() > HISTORY_MAX)
         history.erase(history.begin());
-    history.push_back(cmd);
     saveHistory();
 }
 
-// Print last 10 commands from history.........
-void printHistory()
+// history [n] : prints the latest n commands (default 10).
+void Shell::handleHistory(const std::vector<std::string> &args)
 {
-    int start = history.size() > 10 ? history.size() - 10 : 0;
-    for (size_t i = start; i < history.size(); ++i)
-        std::cout << (i + 1) << " " << history[i] << std::endl;
+    if (args.size() > 2)
+    {
+        std::cerr << "history: too many arguments" << std::endl;
+        return;
+    }
+
+    size_t n = HISTORY_SHOW;
+    if (args.size() == 2)
+    {
+        try
+        {
+            size_t pos = 0;
+            long v = std::stol(args[1], &pos);
+            if (pos != args[1].size() || v < 0)
+                throw 0;
+            n = static_cast<size_t>(v);
+        }
+        catch (...)
+        {
+            std::cerr << "history: " << args[1] << ": numeric argument required" << std::endl;
+            return;
+        }
+    }
+
+    if (n > history.size())
+        n = history.size();
+    for (size_t i = history.size() - n; i < history.size(); ++i)
+        std::cout << history[i] << '\n';
+    std::cout.flush();
 }

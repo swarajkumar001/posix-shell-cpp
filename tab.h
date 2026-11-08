@@ -2,11 +2,11 @@
 #include <string>
 #include <vector>
 
-// Returns a list of matching commands for prefix
+// Built-ins and executables in $PATH starting with prefix (sorted, unique).
 std::vector<std::string> autocompleteCommands(const std::string &prefix);
 
-// Returns a list of matching files/directories for prefix in current directory
+// Files/directories in the current directory starting with prefix (sorted).
 std::vector<std::string> autocompleteFiles(const std::string &prefix);
 
-// Returns the longest common prefix among matches
+// Longest common prefix of all matches.
 std::string longestCommonPrefix(const std::vector<std::string> &matches);

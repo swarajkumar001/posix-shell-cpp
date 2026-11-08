@@ -1,12 +1,18 @@
-#ifndef BG_FG_H // Prevent multiple inclusions
+#ifndef BG_FG_H
 #define BG_FG_H
 
 #include <signal.h>
 
-// Declaration of the fg_pgid variable to track the foreground process group ID..........
+// Process group of the job currently running in the foreground (0 = none).
 extern volatile sig_atomic_t fg_pgid;
-void handle_sigint(int);
-void handle_sigtstp(int);
-void setup_signal_handlers();
+
+// Set by the SIGCHLD handler; the main loop then reaps finished background jobs.
+extern volatile sig_atomic_t child_changed;
+
+// Installs the shell's handlers for SIGINT, SIGTSTP and SIGCHLD.
+void setupShellSignals();
+
+// Restores default signal dispositions in a freshly forked child.
+void resetChildSignals();
 
 #endif

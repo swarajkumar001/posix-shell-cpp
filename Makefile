@@ -1,14 +1,27 @@
+CXX      := g++
+CXXFLAGS := -std=c++17 -Wall -Wextra -O2
+TARGET   := main
 
-main: main.cpp cd.cpp echo.cpp ls.cpp  system_command.cpp  pinfo.cpp  shell.cpp search.cpp io_pipe.cpp display.cpp bg_fg.cpp history.cpp tab.cpp
-	g++ -std=c++17 -Wall -g main.cpp cd.cpp echo.cpp ls.cpp  system_command.cpp  pinfo.cpp  shell.cpp search.cpp io_pipe.cpp display.cpp bg_fg.cpp history.cpp tab.cpp -o main
+SRCS := main.cpp shell.cpp display.cpp cd.cpp echo.cpp ls.cpp pinfo.cpp search.cpp \
+        history.cpp io_pipe.cpp system_command.cpp bg_fg.cpp tab.cpp
+OBJS := $(SRCS:.cpp=.o)
+HDRS := shell.h bg_fg.h display.h tab.h
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
+
+%.o: %.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+run: $(TARGET)
+	./$(TARGET)
+
+test: $(TARGET)
+	bash tests/smoke_test.sh
 
 clean:
-	rm -f main *.o
+	rm -f $(TARGET) $(OBJS)
 
-run: main
-	./main
-
-.PHONY: clean run
-
-
-
+.PHONY: all run test clean

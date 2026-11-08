@@ -1,134 +1,68 @@
-Name :- swaraj kumar
+# POSIX Shell in C++
 
-## Introduction  
-This project is an implementation of a custom **POSIX-like shell** in **C++**as part of Advanced Operating Systems (Monsoon 2025).  
-The shell supports built-in commands, execution of system commands in foreground/background, I/O redirection, pipelines, signals, history, and autocomplete.  
+An interactive Unix shell written from scratch in C++ using only POSIX system calls.
+It has no `system()`, `popen()`, ncurses or `<filesystem>`, and `ls` isn't run through `exec`.
+It was built for the Advanced Operating Systems course (Monsoon 2025).
 
-The code is modular, with each built-in command implemented in a separate file.  
+```
+swaraj@ubuntu:~> ls -la src | grep .cpp > files.txt ; cat < files.txt | wc -l
+12
+swaraj@ubuntu:~> sleep 30 &
+[1] 48213
+swaraj@ubuntu:~> vim notes.txt          # Ctrl-Z
+[2] Stopped  vim notes.txt (pid 48220)
+swaraj@ubuntu:~> fg 48220
+```
 
----
+## Features
 
-## Features Implemented  
+| Area | What it does |
+|------|--------------|
+| **Prompt** | `user@host:dir>`. The directory the shell starts in is `~`. Username comes from `pwd.h` and the host name from `uname()`. |
+| **Parsing** | `;`-separated command lists (split with `strtok`), any amount of spaces and tabs, quotes, and operators with or without spaces (`echo hi>out.txt`). |
+| **Built-ins** | `cd` (`.` `..` `-` `~`), `pwd`, `echo`, `ls`, `pinfo`, `search`, `history`, `jobs`, `fg`, `bg`, `clear`, `exit` |
+| **ls** | `-a`, `-l` and combined forms (`-la`, `-al`, `-l dir -a`), with any number of files or directories. `-l` output matches GNU `ls`: permissions incl. setuid/sticky bits, link count, owner, group, size, mtime, `total`, and `->` for symlinks. |
+| **Processes** | Runs any program with `fork` + `execvp`, in the foreground or in the background with `&` (prints the PID). Each job gets its own process group and the terminal is handed over with `tcsetpgrp`. |
+| **Redirection** | `<`, `>`, `>>`. New files get permissions 0644, and the shell reports an error if the input file is missing. |
+| **Pipes** | Pipelines of any length (`a \| b \| c \| ...`), with redirection on any stage. Built-ins also work inside pipelines. |
+| **Signals** | Ctrl-C interrupts the foreground job, Ctrl-Z stops it and moves it to the job list, and Ctrl-D logs out. The shell itself is never killed or stopped. A `SIGCHLD` handler is used to reap finished background jobs. |
+| **pinfo** | Process state (`R/S/Z/T`, with `+` for foreground), virtual memory and executable path, read from `/proc/<pid>/{stat,statm,exe}`. |
+| **search** | Recursive search for a file or folder name below the current directory, using `opendir`/`readdir`/`lstat`. Prints `True`/`False`. |
+| **History** | Keeps 20 commands across sessions (in `~/.my_shell_history`). `history` shows 10 and `history n` shows n. UP/DOWN arrows browse history in a raw-mode line editor. |
+| **Autocomplete** | TAB completes commands (built-ins and `$PATH`) and files in the current directory. A single match is completed, several matches fill in their common prefix, and otherwise all matches are listed. |
 
-### Shell Prompt and Input Parsing  
-- Displays prompt in format:  
+## Build and run (Linux)
 
-- Uses system calls:  
-- `getenv()` → username  
-- `gethostname()` → hostname  
-- `getcwd()` → current directory  
-- Input read using `getchar()`.  
-- Tokenization done using `strtok()` with delimiters `;`, `|`, whitespace.  
-- Supports multiple commands in one line and background execution using `&`.  
+```bash
+make          # builds ./main
+./main        # start the shell
+make test     # run the automated tests
+make clean
+```
 
----
+You need `g++` with C++17 and GNU `make`. This is a Linux shell: it uses `/proc` and POSIX terminal job control, so it won't build on native Windows. Use WSL or a Linux machine.
 
-### Built-in Commands  
+## Code layout
 
-**cd [dir]**  
-- System calls: `chdir()`, `struct stat`.  
-- Tracks current path and previous path (`pth`, `prev_pth`).  
-- Supports `.`, `..`, `-`, `~`.  
-- Shows error for invalid/multiple arguments.  
+| File | Responsibility |
+|------|----------------|
+| `main.cpp` | Entry point |
+| `shell.h` / `shell.cpp` | `Shell` class: main loop, raw-mode line editor (arrows, backspace, Ctrl-D), tokenizer, `;` splitting, built-in dispatch |
+| `display.cpp` | Prompt |
+| `cd.cpp` | `cd`, `pwd` |
+| `echo.cpp` | `echo` |
+| `ls.cpp` | `ls -a -l` |
+| `pinfo.cpp` | `pinfo` |
+| `search.cpp` | `search` |
+| `history.cpp` | Persistent history and `history [n]` |
+| `io_pipe.cpp` | Redirection parsing and the pipeline executor |
+| `system_command.cpp` | `execvp` of external programs |
+| `bg_fg.cpp` | Signal handlers, waiting for foreground jobs, reaping background jobs, `jobs`/`fg`/`bg` |
+| `tab.cpp` | TAB completion |
+| `tests/smoke_test.sh` | Automated tests that pipe commands into the shell and compare the output (`ls` output is compared with the system `ls`) |
 
-**pwd**  
-- Prints current directory using `getcwd()`.  
+## How it works
 
-**echo [args...]**  
-Prints given arguments.  
-Handles multiple spaces/tabs.  
-
-**ls [-a] [-l] [paths...]**  
-- Uses `struct stat` to fetch file info.  
-- Uses `opendir()`, `readdir()` to list files.  
-- Flags: `-a`, `-l`, and combinations.  
-- Handles multiple directories.  
-
-**pinfo [pid]**  
-- Reads from `/proc/<pid>/`.  
-- Shows: process status, virtual memory, and executable path.  
-- Marks foreground process with `+`.  
-
-**search <filename/dir>**  
-- Recursively searches directories.  
-- Uses `struct stat`, `opendir()`, and `readdir()`.  
-- Returns `True` if found, else `False`.  
-
-**history [n]**  
-- Stores up to 20 commands across sessions.  
-- Default: show last 10 commands.  
-- Supports `history n` for last `n` commands.  
-- Implemented with a `deque`.  
-- Up/Down arrow navigation supported.  
-
-**Other built-ins**  
-- `clear` → clears terminal.  
-- `exit` → exits shell.  
-
----
-
-### System Commands and Process Handling  
-- External commands executed with `fork()`, `execvp()`, and `waitpid()`.  
-- Foreground processes: shell waits for completion.  
-- Background processes: detected with `&`, run in background, PID displayed.  
-- Multiple background jobs supported simultaneously.  
-
----
-
-### I/O Redirection and Pipelines  
-- **Redirection:**  
-- `< file` → input redirection.  
-- `> file` → output overwrite.  
-- `>> file` → output append.  
-- Uses `dup2()` to replace `stdin` / `stdout`.  
-- **Pipelines:**  
-- Tokenized using `|`.  
-- Each command executed with `pipe()`, `dup2()`, `fork()`.  
-- Supports multiple pipes chained together.  
-- Works with redirection inside pipelines.  
-
----
-
-### Signal Handling  
-- Implemented with custom handlers.  
-- `CTRL+C` → sends `SIGINT` to foreground job.  
-- `CTRL+Z` → stops foreground job and pushes to background.  
-- `CTRL+D` → exits the shell.  
-- Shell itself is not terminated accidentally.  
-
----
-
-### Autocomplete  
-- Implemented for commands and files/directories.  
-- Triggered by `TAB`.  
-- Single match → auto-completes.  
-- Multiple matches → prints all options.  
-
----
-
-
-## File Mapping  
-
--
-> main.cpp → Program entry point
-> display.cpp → Shell prompt display
-> cd.cpp → Change directory command
-> echo.cpp → Echo command handler
-> ls.cpp → List directory contents
-> pinfo.cpp → Process info fetcher
-> search.cpp → Recursive file search
-> history.cpp → Command history manager
-> io_pipe.cpp → Piping & I/O redirection
-> tab.cpp → Autocomplete utilities
-> bg_fg.cpp → Foreground & background signal handling
-> Makefile → Build, clean, and run targets
-> 
----
-
-## Steps to Run  
-
-1. make clean
-  2. make
-    3 ./main
-
-     you will enter in my builtin shell and test the built command...
+- **One job = one process group.** Every stage of a pipeline joins the process group of the first stage. For foreground jobs the shell gives that group the terminal (`tcsetpgrp`), so Ctrl-C and Ctrl-Z from the keyboard go only to the job. The shell then waits with `waitpid(-pgid, WUNTRACED)`, which also notices stopped jobs.
+- **Built-ins** run inside the shell process so that `cd`, `exit` and `history` change the shell's own state. Redirection is applied with `dup`/`dup2` and undone afterwards. Inside a pipeline, a built-in runs in the forked child like any other stage.
+- **Line editing** puts the terminal in non-canonical mode (`termios`, no ncurses) while reading a command and restores it before running anything.

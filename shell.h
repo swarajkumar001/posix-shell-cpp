@@ -1,66 +1,97 @@
 #ifndef SHELL_H
 #define SHELL_H
 
-#include <iostream>
 #include <string>
 #include <vector>
-#include <unordered_map>
-#include <sstream>
-#include <cstring>
-#include <unistd.h>
 #include <sys/types.h>
-#include <sys/wait.h>
-#include <fcntl.h>
-#include <signal.h>
+#include <termios.h>
+
+// Names of every command implemented inside the shell (shell.cpp).
+extern const std::vector<std::string> BUILTINS;
+
+// One stage of a pipeline: the argument vector plus its < > >> redirections.
+struct Command
+{
+    std::vector<std::string> argv;
+    std::string in_file;
+    std::string out_file;
+    bool append = false;
+};
+
+// A background or stopped job, identified by its process group id.
+struct Job
+{
+    pid_t pgid;
+    std::string name;
+    bool stopped;
+};
 
 class Shell
 {
-private:
-    bool running;
-    std::vector<std::string> history;
-    std::unordered_map<std::string, std::string> aliases;
-    std::unordered_map<std::string, std::string> env_vars;
-    std::vector<std::pair<pid_t, std::string>> background_jobs;
-    std::string custom_prompt;
-    std::string prev_dir;
-
 public:
     Shell();
     int run();
 
-    void executeCommand(const std::string &input);
+private:
+    bool running;
+    bool interactive;            // stdin is a terminal
+    pid_t shell_pgid;
+    pid_t orig_fg_pgid;          // terminal owner before the shell started
+    struct termios orig_termios; // cooked terminal settings
 
-    // Built-ins
-    void handleCD(const std::vector<std::string> &args);
-    void handlePWD();
-    void handleEcho(const std::vector<std::string> &args);
-    void handleHistory();
-    void handleClear();
-    void handleExit();
-    void handlePinfo(const std::vector<std::string> &args);
-    void handleLS(const std::vector<std::string> &args);
+    std::string home_dir;     // directory the shell was started from, shown as "~"
+    std::string prev_dir;     // for "cd -"
+    std::string history_file; // persistent history across sessions
+    std::vector<std::string> history;
+    std::vector<Job> jobs;
 
-    void handleSearch(const std::vector<std::string> &args);
-
-    void executeWithRedirection(const std::vector<std::string> &args, bool background);
-
-    int setupRedirection(const std::vector<std::string> &args, int &saved_stdin, int &saved_stdout);
-    void restoreRedirection(int saved_stdin, int saved_stdout);
-
-    // Helpers
+    // shell.cpp : prompt, line editing and dispatch
+    void printPrompt();
+    void enableRawMode();
+    void disableRawMode();
+    bool readLine(std::string &line);
+    void redrawLine(const std::string &buf);
+    void executeLine(const std::string &line);
+    void executeCommand(const std::string &cmdline);
     std::vector<std::string> tokenize(const std::string &input);
-    void executePipeline(const std::string &input);
-    void setForegroundPGID(pid_t pgid);
-    void addToHistory(const std::string &command);
+    bool isBuiltin(const std::string &name) const;
+    void runBuiltin(const std::vector<std::string> &args);
+    std::string expandHome(const std::string &path) const;
+    std::string displayPath(const std::string &path) const;
     void cleanup();
 
-    // External/system
-    void executeExternal(const std::vector<std::string> &args, bool background = false);
-    void setPrompt(const std::string &prompt);
+    // tab.cpp : TAB autocompletion
+    void handleTab(std::string &buf);
 
-    // (optional) parsing helpers
-    bool hasPipes(const std::string &input);
-    bool hasRedirection(const std::string &input);
+    // io_pipe.cpp : redirection and pipelines
+    bool parseCommand(const std::vector<std::string> &tokens, Command &cmd);
+    bool applyRedirection(const Command &cmd);
+    void executePipeline(const std::vector<Command> &cmds, bool background, const std::string &name);
+
+    // system_command.cpp : exec of external programs
+    [[noreturn]] void execExternal(const std::vector<std::string> &argv);
+
+    // bg_fg.cpp : job control
+    void waitForeground(pid_t pgid, const std::string &name, bool resume = false);
+    void reapBackgroundJobs();
+    int findJob(const std::vector<std::string> &args, const char *cmd);
+    void handleJobs();
+    void handleFg(const std::vector<std::string> &args);
+    void handleBg(const std::vector<std::string> &args);
+
+    // built-in commands
+    void handleCD(const std::vector<std::string> &args);     // cd.cpp
+    void handlePWD();                                        // cd.cpp
+    void handleEcho(const std::vector<std::string> &args);   // echo.cpp
+    void handleLS(const std::vector<std::string> &args);     // ls.cpp
+    void handlePinfo(const std::vector<std::string> &args);  // pinfo.cpp
+    void handleSearch(const std::vector<std::string> &args); // search.cpp
+
+    // history.cpp
+    void loadHistory();
+    void saveHistory();
+    void addToHistory(const std::string &cmd);
+    void handleHistory(const std::vector<std::string> &args);
 };
 
 #endif // SHELL_H
